@@ -104,6 +104,17 @@
       beep({freq: 220, dur: 0.18, type: 'sawtooth', vol: 0.05, slide: -120});
     }
 
+    function explosionSound() {
+      beep({freq: 520, dur: 0.06, type: 'square', vol: 0.07, slide: -200});
+      beep({freq: 260, dur: 0.16, type: 'sawtooth', vol: 0.06, slide: -180});
+      beep({freq: 120, dur: 0.22, type: 'triangle', vol: 0.045, slide: -80});
+    }
+
+    function ufoSound() {
+      beep({freq: 820, dur: 0.14, type: 'sine', vol: 0.045, slide: 20});
+      beep({freq: 740, dur: 0.14, type: 'sine', vol: 0.04, slide: -20});
+    }
+
     // --- Game state ---
     const ship = {
       w: 58, h: 26,
@@ -117,6 +128,18 @@
     const playerBullets = [];
     const alienBullets = [];
     const aliens = [];
+    const explosions = [];
+
+    const ufo = {
+      active: false,
+      x: 0,
+      y: 48,
+      w: 54,
+      h: 20,
+      vx: 0.36,
+      dir: 1,
+      nextSpawn: 0
+    };
 
     let score = 0;
     let gameOver = false;
@@ -133,10 +156,35 @@
       dir: 1,
       stepX: 18,
       stepDown: 24,
+      basePace: 650,
       pace: 650,
       lastStep: 0,
-      frame: 0
+      frame: 0,
+      totalAliens: 0
     };
+
+    function createExplosion(x, y, size = 1) {
+      explosions.push({
+        x,
+        y,
+        r: 10 * size,
+        life: 360,
+        maxLife: 360,
+        sparks: Array.from({length: 8}, () => ({
+          angle: Math.random() * Math.PI * 2,
+          speed: (0.08 + Math.random() * 0.18) * size,
+          size: 2 + Math.random() * 3
+        }))
+      });
+    }
+
+    function updateFormationPace() {
+      const alive = aliens.filter(a => a.alive).length;
+      const killed = formation.totalAliens - alive;
+      const progress = formation.totalAliens > 1 ? killed / (formation.totalAliens - 1) : 1;
+      const speedFactor = 1 + progress * 9; // ends around 10x speed
+      formation.pace = Math.max(65, formation.basePace / speedFactor);
+    }
 
     function initAliens() {
       aliens.length = 0;
@@ -154,6 +202,8 @@
           });
         }
       }
+      formation.totalAliens = aliens.length;
+      updateFormationPace();
     }
 
     function reset() {
@@ -163,11 +213,15 @@
       won = false;
       playerBullets.length = 0;
       alienBullets.length = 0;
+      explosions.length = 0;
       formation.dir = 1;
       formation.lastStep = 0;
       formation.frame = 0;
+      formation.pace = formation.basePace;
       ship.x = W / 2 - ship.w / 2;
-      ship.y = H - Math.max(90, Math.floor(H * 0.12));
+      ship.y = H - Math.max(170, Math.floor(H * 0.24)); // moved up: smaller play area
+      ufo.active = false;
+      ufo.nextSpawn = performance.now() + 5000 + Math.random() * 9000;
       initAliens();
     }
 
@@ -228,6 +282,54 @@
       }
     }
 
+    function drawUfo() {
+      if (!ufo.active) return;
+      const x = ufo.x, y = ufo.y;
+      ctx.fillStyle = '#ff6f91';
+      ctx.fillRect(x + 8, y + 6, ufo.w - 16, 8);
+      ctx.fillRect(x + 14, y + 2, ufo.w - 28, 6);
+      ctx.fillRect(x + 4, y + 12, ufo.w - 8, 4);
+      ctx.fillStyle = '#ffd166';
+      ctx.fillRect(x + 12, y + 8, 4, 3);
+      ctx.fillRect(x + ufo.w - 16, y + 8, 4, 3);
+    }
+
+    function drawExplosions(dt) {
+      for (let i = explosions.length - 1; i >= 0; i--) {
+        const e = explosions[i];
+        e.life -= dt;
+        if (e.life <= 0) {
+          explosions.splice(i, 1);
+          continue;
+        }
+
+        const p = e.life / e.maxLife;
+        const alpha = Math.max(0, p);
+        const radius = e.r * (1.4 - p);
+
+        ctx.globalAlpha = alpha * 0.9;
+        ctx.fillStyle = '#ff9f1c';
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, radius, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = '#ffe66d';
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, radius * 0.55, 0, Math.PI * 2);
+        ctx.fill();
+
+        for (const s of e.sparks) {
+          const traveled = (1 - p) * 60;
+          const sx = e.x + Math.cos(s.angle) * traveled * s.speed * 8;
+          const sy = e.y + Math.sin(s.angle) * traveled * s.speed * 8;
+          ctx.fillStyle = '#fff';
+          ctx.fillRect(sx, sy, s.size * p, s.size * p);
+        }
+      }
+      ctx.globalAlpha = 1;
+    }
+
     function shootPlayer(t) {
       if (t - ship.lastShot < ship.cooldown || gameOver) return;
       ship.lastShot = t;
@@ -245,6 +347,24 @@
       alive.sort((a,b)=> b.y-a.y);
       const shooter = alive[Math.floor(Math.random() * Math.min(alive.length, 10))];
       alienBullets.push({x: shooter.x + shooter.w / 2 - 2, y: shooter.y + shooter.h + 2, w: 4, h: 12, vy: 0.5});
+    }
+
+    function maybeSpawnUfo(t) {
+      if (gameOver || ufo.active) return;
+      if (t < ufo.nextSpawn) return;
+      ufo.active = true;
+      ufo.dir = Math.random() < 0.5 ? 1 : -1;
+      ufo.x = ufo.dir > 0 ? -ufo.w - 10 : W + 10;
+      ufo.y = Math.max(30, formation.startY - 48);
+      ufo.nextSpawn = t + 9000 + Math.random() * 13000;
+      ufoSound();
+    }
+
+    function moveUfo(dt) {
+      if (!ufo.active || gameOver) return;
+      ufo.x += ufo.vx * dt * ufo.dir;
+      if (ufo.dir > 0 && ufo.x > W + 20) ufo.active = false;
+      if (ufo.dir < 0 && ufo.x + ufo.w < -20) ufo.active = false;
     }
 
     function moveAliens(t) {
@@ -283,6 +403,8 @@
       shootPlayer(t); // automatic fire
       moveAliens(t);
       alienShootRandom();
+      maybeSpawnUfo(t);
+      moveUfo(dt);
 
       for (const b of playerBullets) b.y += b.vy * dt;
       for (const b of alienBullets) b.y += b.vy * dt;
@@ -296,6 +418,24 @@
             b.dead = true;
             a.alive = false;
             score += 10;
+            createExplosion(a.x + a.w / 2, a.y + a.h / 2, 1);
+            explosionSound();
+            updateFormationPace();
+            break;
+          }
+        }
+      }
+
+      // Player bullets vs UFO
+      if (ufo.active) {
+        const ufoRect = {x: ufo.x, y: ufo.y, w: ufo.w, h: ufo.h};
+        for (const b of playerBullets) {
+          if (!b.dead && rectsOverlap(b, ufoRect)) {
+            b.dead = true;
+            ufo.active = false;
+            score += 100;
+            createExplosion(ufo.x + ufo.w / 2, ufo.y + ufo.h / 2, 1.4);
+            explosionSound();
             break;
           }
         }
@@ -314,6 +454,9 @@
       for (const a of aliens) {
         if (a.alive && rectsOverlap(a, shipRect)) {
           a.alive = false;
+          createExplosion(a.x + a.w / 2, a.y + a.h / 2, 1);
+          explosionSound();
+          updateFormationPace();
           loseLife();
         }
       }
@@ -346,7 +489,7 @@
       ctx.globalAlpha = 1;
     }
 
-    function render() {
+    function render(dt) {
       ctx.clearRect(0, 0, W, H);
       drawStars();
 
@@ -356,6 +499,7 @@
       ctx.fillText(`Score: ${score}`, 18, 36);
       ctx.fillText(`Lives: ${ship.lives}`, W - 140, 36);
 
+      drawUfo();
       drawShip();
 
       ctx.fillStyle = '#7df9ff';
@@ -364,6 +508,7 @@
       for (const b of alienBullets) ctx.fillRect(b.x, b.y, b.w, b.h);
 
       for (const a of aliens) if (a.alive) drawAlien(a);
+      drawExplosions(dt);
 
       if (gameOver) {
         ctx.fillStyle = 'rgba(0,0,0,0.55)';
@@ -383,7 +528,7 @@
       const dt = Math.min(33, now - last);
       last = now;
       update(dt, now);
-      render();
+      render(dt);
       requestAnimationFrame(loop);
     }
 
