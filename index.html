@@ -183,8 +183,15 @@
       const alive = aliens.filter(a => a.alive).length;
       const killed = formation.totalAliens - alive;
       const progress = formation.totalAliens > 1 ? killed / (formation.totalAliens - 1) : 1;
-      const speedFactor = 1 + progress * 9; // ends around 10x speed
-      formation.pace = Math.max(65, formation.basePace / speedFactor);
+      let speedFactor = 1 + progress * 9; // base curve
+
+      // Extra acceleration for the final 5 aliens
+      if (alive <= 5) {
+        const finalFiveProgress = (5 - alive) / 4; // 0 at 5 alive, 1 at 1 alive
+        speedFactor *= 1.35 + finalFiveProgress * 1.25;
+      }
+
+      formation.pace = Math.max(45, formation.basePace / speedFactor);
     }
 
     function updateHighScore() {
@@ -351,7 +358,7 @@
 
     function shootPlayer(t) {
       const activePlayerShots = playerBullets.filter(b => !b.dead).length;
-      if (activePlayerShots >= 2) return;
+      if (activePlayerShots >= 1) return;
       if (t - ship.lastShot < ship.cooldown || gameOver) return;
       ship.lastShot = t;
       playerBullets.push({x: ship.x + ship.w / 2 - 4, y: ship.y - 12, w: 8, h: 16, vy: -0.9});
