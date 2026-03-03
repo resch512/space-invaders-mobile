@@ -142,6 +142,7 @@
     };
 
     let score = 0;
+    let highScore = Number(localStorage.getItem('spaceInvadersHighScore') || 0);
     let gameOver = false;
     let won = false;
 
@@ -156,8 +157,8 @@
       dir: 1,
       stepX: 18,
       stepDown: 24,
-      basePace: 650,
-      pace: 650,
+      basePace: 520,
+      pace: 520,
       lastStep: 0,
       frame: 0,
       totalAliens: 0
@@ -184,6 +185,13 @@
       const progress = formation.totalAliens > 1 ? killed / (formation.totalAliens - 1) : 1;
       const speedFactor = 1 + progress * 9; // ends around 10x speed
       formation.pace = Math.max(65, formation.basePace / speedFactor);
+    }
+
+    function updateHighScore() {
+      if (score > highScore) {
+        highScore = score;
+        localStorage.setItem('spaceInvadersHighScore', String(highScore));
+      }
     }
 
     function initAliens() {
@@ -219,7 +227,7 @@
       formation.frame = 0;
       formation.pace = formation.basePace;
       ship.x = W / 2 - ship.w / 2;
-      ship.y = H - Math.max(170, Math.floor(H * 0.24)); // moved up: smaller play area
+      ship.y = H - Math.max(240, Math.floor(H * 0.34)); // moved further up: vertically smaller game area
       ufo.active = false;
       ufo.nextSpawn = performance.now() + 5000 + Math.random() * 9000;
       initAliens();
@@ -266,19 +274,30 @@
     function drawAlien(a) {
       ctx.fillStyle = a.row % 2 ? '#8bff8b' : '#ffdd77';
       const f = formation.frame;
-      // Simple 2-frame animation (arms/legs alternate)
-      ctx.fillRect(a.x + 6, a.y + 4, a.w - 12, a.h - 10);
-      ctx.fillRect(a.x + 2, a.y + 9, 4, 6);
-      ctx.fillRect(a.x + a.w - 6, a.y + 9, 4, 6);
-      ctx.fillRect(a.x + 10, a.y + a.h - 8, 4, 6);
-      ctx.fillRect(a.x + a.w - 14, a.y + a.h - 8, 4, 6);
+
+      if (f === 0) {
+        // Frame A
+        ctx.fillRect(a.x + 6, a.y + 4, a.w - 12, a.h - 10);
+        ctx.fillRect(a.x + 1, a.y + 8, 5, 7);
+        ctx.fillRect(a.x + a.w - 6, a.y + 8, 5, 7);
+        ctx.fillRect(a.x + 9, a.y + a.h - 8, 5, 6);
+        ctx.fillRect(a.x + a.w - 14, a.y + a.h - 8, 5, 6);
+      } else {
+        // Frame B (slightly shifted limbs/body)
+        ctx.fillRect(a.x + 5, a.y + 5, a.w - 10, a.h - 10);
+        ctx.fillRect(a.x + 3, a.y + 10, 4, 6);
+        ctx.fillRect(a.x + a.w - 7, a.y + 10, 4, 6);
+        ctx.fillRect(a.x + 7, a.y + a.h - 9, 5, 7);
+        ctx.fillRect(a.x + a.w - 12, a.y + a.h - 9, 5, 7);
+      }
+
       ctx.fillStyle = '#152';
       if (f === 0) {
         ctx.fillRect(a.x + 11, a.y + 10, 4, 4);
         ctx.fillRect(a.x + a.w - 15, a.y + 10, 4, 4);
       } else {
-        ctx.fillRect(a.x + 9, a.y + 10, 4, 4);
-        ctx.fillRect(a.x + a.w - 13, a.y + 10, 4, 4);
+        ctx.fillRect(a.x + 9, a.y + 11, 4, 4);
+        ctx.fillRect(a.x + a.w - 13, a.y + 11, 4, 4);
       }
     }
 
@@ -331,9 +350,11 @@
     }
 
     function shootPlayer(t) {
+      const activePlayerShots = playerBullets.filter(b => !b.dead).length;
+      if (activePlayerShots >= 2) return;
       if (t - ship.lastShot < ship.cooldown || gameOver) return;
       ship.lastShot = t;
-      playerBullets.push({x: ship.x + ship.w / 2 - 2, y: ship.y - 10, w: 4, h: 12, vy: -0.9});
+      playerBullets.push({x: ship.x + ship.w / 2 - 4, y: ship.y - 12, w: 8, h: 16, vy: -0.9});
       laserSound();
     }
 
@@ -346,7 +367,7 @@
       // pick one from lower half a bit more often
       alive.sort((a,b)=> b.y-a.y);
       const shooter = alive[Math.floor(Math.random() * Math.min(alive.length, 10))];
-      alienBullets.push({x: shooter.x + shooter.w / 2 - 2, y: shooter.y + shooter.h + 2, w: 4, h: 12, vy: 0.5});
+      alienBullets.push({x: shooter.x + shooter.w / 2 - 4, y: shooter.y + shooter.h + 2, w: 8, h: 16, vy: 0.5});
     }
 
     function maybeSpawnUfo(t) {
@@ -393,6 +414,8 @@
 
     function loseLife() {
       ship.lives -= 1;
+      createExplosion(ship.x + ship.w / 2, ship.y + ship.h / 2, 2.8);
+      explosionSound();
       hitSound();
       if (ship.lives <= 0) {
         gameOver = true;
@@ -409,6 +432,20 @@
       for (const b of playerBullets) b.y += b.vy * dt;
       for (const b of alienBullets) b.y += b.vy * dt;
 
+      // Player bullets vs alien bullets
+      for (const pb of playerBullets) {
+        if (pb.dead) continue;
+        for (const ab of alienBullets) {
+          if (ab.dead) continue;
+          if (rectsOverlap(pb, ab)) {
+            pb.dead = true;
+            ab.dead = true;
+            createExplosion((pb.x + ab.x) / 2 + 2, (pb.y + ab.y) / 2 + 6, 0.6);
+            break;
+          }
+        }
+      }
+
       // Player bullets vs aliens
       for (const b of playerBullets) {
         if (b.dead) continue;
@@ -418,6 +455,7 @@
             b.dead = true;
             a.alive = false;
             score += 10;
+            updateHighScore();
             createExplosion(a.x + a.w / 2, a.y + a.h / 2, 1);
             explosionSound();
             updateFormationPace();
@@ -434,6 +472,7 @@
             b.dead = true;
             ufo.active = false;
             score += 100;
+            updateHighScore();
             createExplosion(ufo.x + ufo.w / 2, ufo.y + ufo.h / 2, 1.4);
             explosionSound();
             break;
@@ -496,8 +535,13 @@
       // HUD
       ctx.fillStyle = '#a7ffeb';
       ctx.font = `${Math.max(22, Math.floor(W * 0.025))}px system-ui`;
+      ctx.textAlign = 'left';
       ctx.fillText(`Score: ${score}`, 18, 36);
-      ctx.fillText(`Lives: ${ship.lives}`, W - 140, 36);
+      ctx.textAlign = 'center';
+      ctx.fillText(`High: ${highScore}`, W / 2, 36);
+      ctx.textAlign = 'right';
+      ctx.fillText(`Lives: ${ship.lives}`, W - 18, 36);
+      ctx.textAlign = 'left';
 
       drawUfo();
       drawShip();
